@@ -1,0 +1,17 @@
+# vim: set fenc=utf-8 ft=taskini:
+# see: https://github.com/skywind3000/asynctasks.vim/wiki/Task-Config
+
+[project-init]
+command=cmake -B build -GNinja
+cwd=<root>
+
+[project-build]
+command=cmake --build build
+cwd=<root>
+errorformat=%. %#--> %f:%l:%c
+
+[project-run]
+command=bash test-mr.sh
+cwd=<root>/src/main
+output=terminal
+
