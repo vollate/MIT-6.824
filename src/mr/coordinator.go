@@ -182,7 +182,6 @@ func (c *Coordinator) Finish(args *FinishArgs, reply *FinishReply) error {
 			if err != nil {
 				log.Fatal(err)
 			} else {
-				//c.reduceFiles[index] = append(c.reduceFiles[index], file)
 				c.reduceFiles[index].Append(file)
 			}
 		}
@@ -236,8 +235,8 @@ func initCoordinator(files *[]string, nReduce int) *Coordinator {
 	c.reduceAlive.statusMap = make(map[int]time.Time)
 	c.mapStatus = make([]atomic.Bool, len(*files))
 	c.reduceStatus = make([]atomic.Bool, nReduce)
-	c.mapAlive.timeout = 5 * time.Second
-	c.reduceAlive.timeout = 5 * time.Second
+	c.mapAlive.timeout = 10 * time.Second
+	c.reduceAlive.timeout = 10 * time.Second
 	return c
 }
 
