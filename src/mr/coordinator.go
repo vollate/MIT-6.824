@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -21,25 +22,6 @@ const (
 type TaskQueue struct {
 	queue []interface{}
 	mutex sync.Mutex
-}
-
-type WorkerStatus struct {
-	timeout   time.Duration
-	statusMap map[int]time.Time
-	mutex     sync.Mutex
-}
-
-type Coordinator struct {
-	mapFiles      []string
-	reduceFiles   [][]string
-	mapTasks      TaskQueue
-	reduceTasks   TaskQueue
-	mapAlive      WorkerStatus
-	reduceAlive   WorkerStatus
-	mapStatus     []bool
-	reduceStatus  []bool
-	allMapDone    bool
-	allReduceDone bool
 }
 
 func InitTaskQueue(length int) *TaskQueue {
@@ -72,6 +54,12 @@ func (q *TaskQueue) Len() int {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
 	return len(q.queue)
+}
+
+type WorkerStatus struct {
+	timeout   time.Duration
+	statusMap map[int]time.Time
+	mutex     sync.Mutex
 }
 
 func (s *WorkerStatus) remove(workerId int) {
@@ -109,18 +97,64 @@ func (s *WorkerStatus) checkTimeout() []int {
 	return res
 }
 
-// Your code here -- RPC handlers for the worker to call.
+type FileList struct {
+	Files []string
+	mutex sync.Mutex
+}
+
+func (f *FileList) Assign(file *[]string) {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+	f.Files = *file
+}
+
+func (f *FileList) All() []string {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+	return f.Files
+}
+
+func (f *FileList) Get(index int) string {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+	return f.Files[index]
+}
+
+func (f *FileList) Append(file string) {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+	f.Files = append(f.Files, file)
+}
+
+func initFileList(files *[]string) *FileList {
+	res := &FileList{}
+	res.Files = *files
+	return res
+}
+
+type Coordinator struct {
+	mapFiles      FileList
+	reduceFiles   []FileList
+	mapTasks      TaskQueue
+	reduceTasks   TaskQueue
+	mapAlive      WorkerStatus
+	reduceAlive   WorkerStatus
+	mapStatus     []atomic.Bool
+	reduceStatus  []atomic.Bool
+	allMapDone    atomic.Bool
+	allReduceDone atomic.Bool
+}
 
 func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 	if c.mapTasks.Len() > 0 {
 		reply.WorkerId = c.mapTasks.Pop().(int)
-		reply.FilePath = append(reply.FilePath, c.mapFiles[reply.WorkerId])
+		reply.FilePath = append(reply.FilePath, c.mapFiles.Get(reply.WorkerId))
 		reply.TaskType = Map
 		reply.NReduce = len(c.reduceStatus)
 		c.mapAlive.updateTimeStamp(reply.WorkerId, time.Now())
-	} else if c.allMapDone && c.reduceTasks.Len() > 0 {
+	} else if c.allMapDone.Load() && c.reduceTasks.Len() > 0 {
 		reply.WorkerId = c.reduceTasks.Pop().(int)
-		reply.FilePath = c.reduceFiles[reply.WorkerId]
+		reply.FilePath = c.reduceFiles[reply.WorkerId].All()
 		reply.TaskType = Reduce
 		c.reduceAlive.updateTimeStamp(reply.WorkerId, time.Now())
 	} else if !c.doneImpl() {
@@ -148,23 +182,23 @@ func (c *Coordinator) Finish(args *FinishArgs, reply *FinishReply) error {
 			if err != nil {
 				log.Fatal(err)
 			} else {
-				c.reduceFiles[index] = append(c.reduceFiles[index], file)
+				//c.reduceFiles[index] = append(c.reduceFiles[index], file)
+				c.reduceFiles[index].Append(file)
 			}
 		}
 		c.mapAlive.remove(args.WorkerId)
-		c.mapStatus[args.WorkerId] = true
-		c.allMapDone = allTasksDone(&c.mapStatus)
+		c.mapStatus[args.WorkerId].Store(true)
+		c.allMapDone.Store(allTasksDone(&c.mapStatus))
 	} else if args.TaskType == Reduce {
 		c.reduceAlive.remove(args.WorkerId)
-		c.reduceStatus[args.WorkerId] = true
-		c.allReduceDone = allTasksDone(&c.reduceStatus)
+		c.reduceStatus[args.WorkerId].Store(true)
+		c.allReduceDone.Store(allTasksDone(&c.reduceStatus))
 	} else {
 		fmt.Println("Error: unknown work type: ", args.TaskType)
 	}
 	return nil
 }
 
-// start a thread that listens for RPCs from worker.go
 func (c *Coordinator) server() {
 	rpc.Register(c)
 	rpc.HandleHTTP()
@@ -181,11 +215,11 @@ func (c *Coordinator) server() {
 // main/mrcoordinator.go calls Done() periodically to find out
 // if the entire job has finished.
 func (c *Coordinator) doneImpl() bool {
-	return c.allMapDone && c.allReduceDone
+	return c.allMapDone.Load() && c.allReduceDone.Load()
 }
 
 func (c *Coordinator) Done() bool {
-	time.Sleep(2 * time.Second)
+	time.Sleep(2 * time.Second) // wait for all workers to exit
 	return c.doneImpl()
 }
 
@@ -194,14 +228,14 @@ func (c *Coordinator) Done() bool {
 // nReduce is the number of reduce tasks to use.
 func initCoordinator(files *[]string, nReduce int) *Coordinator {
 	c := &Coordinator{}
-	c.mapFiles = *files
-	c.reduceFiles = make([][]string, nReduce)
+	c.mapFiles = *initFileList(files)
+	c.reduceFiles = make([]FileList, nReduce)
 	c.mapTasks = *InitTaskQueue(len(*files))
 	c.reduceTasks = *InitTaskQueue(nReduce)
 	c.mapAlive.statusMap = make(map[int]time.Time)
 	c.reduceAlive.statusMap = make(map[int]time.Time)
-	c.mapStatus = make([]bool, len(*files))
-	c.reduceStatus = make([]bool, nReduce)
+	c.mapStatus = make([]atomic.Bool, len(*files))
+	c.reduceStatus = make([]atomic.Bool, nReduce)
 	c.mapAlive.timeout = 5 * time.Second
 	c.reduceAlive.timeout = 5 * time.Second
 	return c
@@ -221,18 +255,18 @@ func (c *Coordinator) checkAlive() {
 	}
 }
 
+func allTasksDone(record *[]atomic.Bool) bool {
+	for i := range *record {
+		if !(*record)[i].Load() {
+			return false
+		}
+	}
+	return true
+}
+
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c := initCoordinator(&files, nReduce)
 	go c.checkAlive()
 	c.server()
 	return c
-}
-
-func allTasksDone(record *[]bool) bool {
-	for _, val := range *record {
-		if val == false {
-			return false
-		}
-	}
-	return true
 }
