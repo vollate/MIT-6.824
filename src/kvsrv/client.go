@@ -39,10 +39,11 @@ func MakeClerk(server *labrpc.ClientEnd) *Clerk {
 // arguments. and reply must be passed as a pointer.
 func (ck *Clerk) Get(key string) string {
 	ck.seq.Add(1)
-	args := GetArgs{key, ck.id.Load(), ck.seq.Load()}
+	args := GetArgs{Key: key, Id: ck.id.Load(), Seq: ck.seq.Load()}
 	var reply GetReply
+	DPrintf("get: %v, %v, %v\n", args.Key, args.Id, args.Seq)
 	for !ck.server.Call("KVServer.Get", &args, &reply) {
-		DPrintf("Get failed\n")
+		DPrintf("resend get: %v, %v, %v\n", args.Key, args.Id, args.Seq)
 	}
 	ck.id.Store(reply.Id)
 	return reply.Value
@@ -68,8 +69,9 @@ func (ck *Clerk) PutAppend(key string, value string, op string) string {
 	ck.seq.Add(1)
 	args := PutAppendArgs{key, value, ck.id.Load(), ck.seq.Load()}
 	var reply PutAppendReply
+	DPrintf("pa: %v, %v, %v, %v\n", args.Key, args.Value, args.Id, args.Seq)
 	for !ck.server.Call(target, &args, &reply) {
-		DPrintf("PutAppend failed\n")
+		DPrintf("resend pa: %v, %v, %v, %v\n", args.Key, args.Value, args.Id, args.Seq)
 	}
 	ck.id.Store(reply.Id)
 	return reply.Value

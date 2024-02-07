@@ -18,7 +18,6 @@ type GetArgs struct {
 	Id  uint64
 	Seq uint32
 }
-
 type GetReply struct {
 	Value string
 	Id    uint64
