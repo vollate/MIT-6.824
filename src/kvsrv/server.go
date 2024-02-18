@@ -2,7 +2,6 @@ package kvsrv
 
 import (
 	"log"
-	"math/rand"
 	"sync"
 	"time"
 )
@@ -48,6 +47,7 @@ func (cr *ClientRecord) UpdateRecords(lastVal *string) {
 type KVServer struct {
 	mu              sync.RWMutex
 	recordMu        sync.RWMutex
+	clientId        uint64
 	data            map[string]string
 	clientRecords   map[uint64]*ClientRecord
 	cleanInterval   time.Duration
@@ -140,18 +140,17 @@ func (kv *KVServer) Append(args *PutAppendArgs, reply *PutAppendReply) {
 }
 
 func (kv *KVServer) CreateId(seq uint32) uint64 {
-	for {
-		id := rand.Uint64()
-		_, ok := kv.clientRecords[id]
-		if ok || id == 0 {
-			continue
-		}
-		DPrintf("createId: %v\n", id)
-		kv.clientRecords[id] = &ClientRecord{seq: seq - 1, lastUse: time.Now()}
-		go kv.CleanUnused(id, kv.clientRecords[id])
-		return id
+	id := kv.clientId
+	kv.clientId++
+	if kv.clientId == 0 {
+		kv.clientId = 1 //meet the maximum client num, reuse lower
 	}
+	DPrintf("createId: %v\n", id)
+	kv.clientRecords[id] = &ClientRecord{seq: seq - 1, lastUse: time.Now()}
+	go kv.CleanUnused(id, kv.clientRecords[id])
+	return id
 }
+
 func (kv *KVServer) CreateDeletedRecord(id uint64, seq uint32) {
 	kv.clientRecords[id] = &ClientRecord{seq: seq - 1, lastUse: time.Now()}
 }
@@ -160,8 +159,9 @@ func StartKVServer() *KVServer {
 	kv := new(KVServer)
 	kv.data = make(map[string]string)
 	kv.clientRecords = make(map[uint64]*ClientRecord)
-	kv.cleanInterval = 500 * time.Microsecond
-	kv.timeoutInterval = 1000 * time.Microsecond
-	rand.NewSource(time.Now().UnixNano())
+	kv.clientId = 1
+	kv.cleanInterval = 1 * time.Millisecond
+	kv.timeoutInterval = 2 * time.Millisecond
+	//rand.NewSource(time.Now().UnixNano())
 	return kv
 }
