@@ -11,7 +11,7 @@ cwd=<root>
 errorformat=%. %#--> %f:%l:%c
 
 [project-run]
-command=bash test-mr.sh
-cwd=<root>/src/main
+command=go test -run 3A
+cwd=<root>/src/raft
 output=terminal
 
