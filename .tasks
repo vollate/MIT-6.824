@@ -11,7 +11,7 @@ cwd=<root>
 errorformat=%. %#--> %f:%l:%c
 
 [project-run]
-command=go test -run 3A
+command=go test -run 3B
 cwd=<root>/src/raft
 output=terminal
 

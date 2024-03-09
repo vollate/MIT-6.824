@@ -2,44 +2,107 @@ package raft
 
 import "sync"
 
-const MaxRetry = 5
+const MaxTry = 3
 
-type VoteInfo struct {
-	mu          sync.Mutex
-	votedFor    int
-	voteGranted int
-	finished    bool
+type RaftServerState int
+
+const (
+	FOLLOWER RaftServerState = iota
+	CANDIDATE
+	LEADER
+)
+
+const (
+	VOTE_GRANTED         = -1
+	VOTE_TRANSMIT_FAILED = -2
+)
+
+type TransitFunc func(*Raft, int, bool)
+type TransitTable struct {
+	once  sync.Once
+	table [][]TransitFunc
 }
 
-func (vi *VoteInfo) Lock() {
-	vi.mu.Lock()
+var transitTable TransitTable
+
+func (tf *TransitTable) Instance() *[][]TransitFunc {
+	tf.once.Do(func() {
+		tf.table = make([][]TransitFunc, 3)
+		tf.table[FOLLOWER] = []TransitFunc{follower2Follower, follower2Candidate, nil}
+		tf.table[CANDIDATE] = []TransitFunc{candidate2Follower, candidate2Candidate, candidate2Leader}
+		tf.table[LEADER] = []TransitFunc{leader2Follower, nil, nil}
+	})
+	return &tf.table
+}
+func follower2Follower(rf *Raft, newTerm int, lock bool) {
+	if lock {
+		rf.mu.Lock()
+	}
+	rf.term = newTerm
+	rf.votefor = -1
+	rf.heartbeat = true
+	if lock {
+		rf.mu.Unlock()
+	}
 }
 
-func (vi *VoteInfo) Unlock() {
-	vi.mu.Unlock()
+func follower2Candidate(rf *Raft, newTerm int, lock bool) {
+	if lock {
+		rf.mu.Lock()
+	}
+	rf.state = CANDIDATE
+	rf.term++
+	rf.votefor = rf.me
+	if lock {
+		rf.mu.Unlock()
+	}
+	go rf.startElection()
 }
 
-func (vi *VoteInfo) InitPoll(selfId int) {
-	vi.mu.Lock()
-	defer vi.mu.Unlock()
-	vi.votedFor = selfId
-	vi.voteGranted = 1
-	vi.finished = false
+func candidate2Candidate(rf *Raft, newTerm int, lock bool) {
+	if lock {
+		rf.mu.Lock()
+	}
+	rf.term++
+	if lock {
+		rf.mu.Unlock()
+	}
+	go rf.startElection() // start new election
 }
 
-func (vi *VoteInfo) Reset() {
-	vi.mu.Lock()
-	defer vi.mu.Unlock()
-	vi.votedFor = -1
-	vi.finished = true
+func candidate2Leader(rf *Raft, newTerm int, lock bool) {
+	if lock {
+		rf.mu.Lock()
+	}
+	rf.state = LEADER
+	if lock {
+		rf.mu.Unlock()
+	}
+	go rf.broadcastHeartbeat()
 }
 
-type Leader struct {
-	nextIndex  []int
-	matchIndex []int
+func candidate2Follower(rf *Raft, newTerm int, lock bool) {
+	if lock {
+		rf.mu.Lock()
+	}
+	rf.state = FOLLOWER
+	rf.term = newTerm
+	rf.votefor = -1
+	rf.heartbeat = true // wait the candidate become leader
+	if lock {
+		rf.mu.Unlock()
+	}
 }
 
-func MakeLeader(lastLog int) *Leader {
-	ret := &Leader{nextIndex: make([]int, lastLog+1), matchIndex: make([]int, 0)}
-	return ret
+func leader2Follower(rf *Raft, newTerm int, lock bool) {
+	if lock {
+		rf.mu.Lock()
+	}
+	rf.state = FOLLOWER
+	rf.term = newTerm
+	rf.votefor = -1
+	rf.heartbeat = true // avoid election timeout once
+	if lock {
+		rf.mu.Unlock()
+	}
 }
