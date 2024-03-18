@@ -75,6 +75,10 @@ func candidate2Leader(rf *Raft, newTerm int, lock bool) {
 		rf.mu.Lock()
 	}
 	rf.state = LEADER
+	for i := range rf.peers {
+		rf.nextIndex[i] = rf.commitIndex + 1 //TODO
+		rf.matchIndex[i] = 0
+	}
 	if lock {
 		rf.mu.Unlock()
 	}
