@@ -204,7 +204,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 	if votable := (rf.votefor == -1 || rf.votefor == args.CandidateId); !votable {
 		reply.VoteGranted = false
-		reply.Term = term
 		return
 	}
 	DPrintf("%v vote for %v in term %v", rf.me, args.CandidateId, rf.term)
